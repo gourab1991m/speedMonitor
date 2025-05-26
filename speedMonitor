@@ -1,0 +1,98 @@
+package com.rental.monitor
+
+// --- MODEL ---
+data class RentalSession(
+    val renterId: String,
+    val maxAllowedSpeedKph: Float
+)
+
+// --- DATA REPOSITORY ---
+class SpeedLimitRepository {
+    private var currentSession: RentalSession? = null
+
+    fun setRentalSession(session: RentalSession) {
+        currentSession = session
+    }
+
+    fun getSpeedLimit(): Float? = currentSession?.maxAllowedSpeedKph
+    fun getCurrentSession(): RentalSession? = currentSession
+}
+
+// --- PLATFORM VEHICLE SPEED PROVIDER ---
+import android.car.hardware.CarPropertyValue
+import android.car.hardware.property.CarPropertyManager
+import android.car.hardware.property.CarPropertyEventCallback
+import android.car.VehiclePropertyIds
+
+class VehicleSpeedProvider(private val carPropertyManager: CarPropertyManager) {
+
+    fun registerSpeedListener(callback: (Float) -> Unit) {
+        val listener = object : CarPropertyEventCallback {
+            override fun onChangeEvent(event: CarPropertyValue<*>) {
+                val speed = event.value as? Float ?: return
+                callback(speed)
+            }
+
+            override fun onErrorEvent(propId: Int, zone: Int) {}
+        }
+
+        carPropertyManager.registerCallback(
+            listener,
+            VehiclePropertyIds.PERF_VEHICLE_SPEED,
+            CarPropertyManager.SENSOR_RATE_ONCHANGE
+        )
+    }
+}
+
+// --- NOTIFICATION MANAGER INTERFACE ---
+interface NotificationManager {
+    fun notifyFleet(renterId: String, speed: Float, limit: Float)
+    fun alertUser()
+}
+
+// --- FIREBASE NOTIFIER IMPLEMENTATION ---
+class FirebaseNotifier : NotificationManager {
+    override fun notifyFleet(renterId: String, speed: Float, limit: Float) {
+        // TODO: Call Firebase REST API or FCM SDK
+        println("[Firebase] ALERT: Renter $renterId exceeded speed $speed km/h (limit: $limit km/h)")
+    }
+
+    override fun alertUser() {
+        // TODO: Use Android Automotive system UI alert
+        println("[System Alert] You are exceeding the speed limit!")
+    }
+}
+
+// --- SPEED MONITORING SERVICE ---
+class SpeedMonitorService(
+    private val speedProvider: VehicleSpeedProvider,
+    private val repository: SpeedLimitRepository,
+    private val notifier: NotificationManager
+) {
+    fun startMonitoring() {
+        speedProvider.registerSpeedListener { currentSpeed ->
+            val maxSpeed = repository.getSpeedLimit() ?: return@registerSpeedListener
+            if (currentSpeed > maxSpeed) {
+                val session = repository.getCurrentSession() ?: return@registerSpeedListener
+                notifier.notifyFleet(session.renterId, currentSpeed, maxSpeed)
+                notifier.alertUser()
+            }
+        }
+    }
+}
+
+// --- MAIN SIMULATION ENTRY ---
+fun main() {
+    // Assume carPropertyManager is mocked or injected
+    val carPropertyManager: CarPropertyManager = TODO("Provide CarPropertyManager instance")
+
+    val speedProvider = VehicleSpeedProvider(carPropertyManager)
+    val repository = SpeedLimitRepository()
+    val notifier = FirebaseNotifier()
+
+    val session = RentalSession("user123", maxAllowedSpeedKph = 100f)
+    repository.setRentalSession(session)
+
+    val monitorService = SpeedMonitorService(speedProvider, repository, notifier)
+    monitorService.startMonitoring()
+}
